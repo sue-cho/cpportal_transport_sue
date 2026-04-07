@@ -19,6 +19,23 @@ CITY_DEFAULTS = {
 WORLD_CENTER = (20.0, 0.0, 1.5)
 
 
+def _clean_str(value: object, default: str = "") -> str:
+    """Return a plain string; avoid pandas.NA/NaN leaking into PyDeck JSON."""
+    if value is None or pd.isna(value):
+        return default
+    return str(value)
+
+
+def _clean_float(value: object, default: float) -> float:
+    """Return a plain float; fall back when value is missing/invalid."""
+    if value is None or pd.isna(value):
+        return float(default)
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
 def build_city_map(
     cities_df: pd.DataFrame,
     obs_df: Optional[pd.DataFrame] = None,
@@ -37,10 +54,12 @@ def build_city_map(
 
     rows = []
     for _, city in cities_df.iterrows():
-        code = city.get("city_code", "")
-        lat = city.get("lat") or CITY_DEFAULTS.get(code, WORLD_CENTER[:2])[0]
-        lon = city.get("lon") or CITY_DEFAULTS.get(code, WORLD_CENTER[:2])[1]
-        name = city.get("city_name", code)
+        raw_code = city.get("city_code", "")
+        code = _clean_str(raw_code, "")
+        defaults = CITY_DEFAULTS.get(code, WORLD_CENTER[:2])
+        lat = _clean_float(city.get("lat"), defaults[0])
+        lon = _clean_float(city.get("lon"), defaults[1])
+        name = _clean_str(city.get("city_name"), code or "Unknown city")
 
         mean_val = None
         treated = None
@@ -89,8 +108,8 @@ def build_city_map(
         rows.append({
             "city_name": name,
             "city_code": code,
-            "lat": float(lat),
-            "lon": float(lon),
+            "lat": lat,
+            "lon": lon,
             "color": color,
             "radius": radius,
             "tooltip_value": val_str,
@@ -98,7 +117,7 @@ def build_city_map(
             "tooltip_status": "Policy active" if treated else ("Pre-policy" if treated is False else "Unknown"),
         })
 
-    map_df = pd.DataFrame(rows)
+    map_df = pd.DataFrame(rows).fillna("")
 
     layer = pdk.Layer(
         "ScatterplotLayer",
