@@ -117,11 +117,9 @@ def build_city_map(
             "tooltip_status": "Policy active" if treated else ("Pre-policy" if treated is False else "Unknown"),
         })
 
-    map_df = pd.DataFrame(rows).fillna("")
-
     layer = pdk.Layer(
         "ScatterplotLayer",
-        data=map_df,
+        data=rows,
         get_position=["lon", "lat"],
         get_fill_color="color",
         get_radius="radius",
@@ -135,8 +133,13 @@ def build_city_map(
     )
 
     # Center view on mean of all city coords
-    center_lat = map_df["lat"].mean() if not map_df.empty else WORLD_CENTER[0]
-    center_lon = map_df["lon"].mean() if not map_df.empty else WORLD_CENTER[1]
+    # Ensure plain Python floats (not numpy scalars) for PyDeck JSON serialization.
+    if rows:
+        center_lat = float(sum(float(r["lat"]) for r in rows) / len(rows))
+        center_lon = float(sum(float(r["lon"]) for r in rows) / len(rows))
+    else:
+        center_lat = float(WORLD_CENTER[0])
+        center_lon = float(WORLD_CENTER[1])
 
     view = pdk.ViewState(
         latitude=center_lat,
