@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import datetime
+import html
 import re
 from pathlib import Path
 from typing import Any, Optional
@@ -325,11 +326,17 @@ def _map_error_html(height: int, msg: str = "Map unavailable.") -> str:
 
 def deck_to_iframe(deck: pdk.Deck, height: int = 480) -> str:
     try:
-        raw = deck.to_html(as_string=True, iframe_height=height, iframe_width="100%")
+        # pydeck versions differ: some support iframe_height/iframe_width, some don't.
+        # Try newer signature first, then gracefully fall back for older deployments.
+        try:
+            raw = deck.to_html(as_string=True, iframe_height=height, iframe_width="100%")
+        except TypeError:
+            raw = deck.to_html(as_string=True)
         b64 = base64.b64encode(raw.encode("utf-8")).decode("ascii")
         return f'<iframe src="data:text/html;base64,{b64}" width="100%" height="{height}" style="border:none;border-radius:12px;"></iframe>'
-    except Exception:
-        return _map_error_html(height)
+    except Exception as e:
+        err = f"{type(e).__name__}: {str(e)}"[:180]
+        return _map_error_html(height, f"Map unavailable: {html.escape(err)}")
 
 
 # ---------------------------------------------------------------------------
@@ -796,7 +803,8 @@ def server(input, output, session):
             deck = build_city_map(cities, obs if not obs.empty else None)
             return ui.HTML(deck_to_iframe(deck, height=480))
         except Exception as e:
-            return ui.HTML(_map_error_html(480, f"Map error: {str(e)[:60]}"))
+            err = f"{type(e).__name__}: {str(e)}"[:180]
+            return ui.HTML(_map_error_html(480, f"Map error: {html.escape(err)}"))
 
     # -----------------------------------------------------------------------
     # Annual mean bar chart (last 3 years)
