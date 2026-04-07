@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "locale": ".UTF-8",
+  "metadata": {
+    "appmode": "python-shiny",
+    "entrypoint": "app:app"
+  },
+  "python": {
+    "version": "3.8.5",
+    "package_manager": {
+      "name": "pip",
+      "version": "25.0.1",
+      "package_file": "requirements.txt"
+    }
+  },
+  "environment": {
+    "python": {
+      "requires": "~=3.11.0"
+    }
+  },
+  "files": {
+    "requirements.txt": {
+      "checksum": "9aa9b6801417dd8023a8b031ca1a9086"
+    },
+    ".env.example": {
+      "checksum": "a1b00d01b2ff4e2f2c18a43b78db93b2"
+    },
+    ".gitignore": {
+      "checksum": "6d0a71882aa1ce6ad8cd87967b4fe22e"
+    },
+    ".python-version": {
+      "checksum": "b8c8ee3c82ea7f35105e07074153f471"
+    },
+    "app.py": {
+      "checksum": "560f10ccf59e58abecc41c28ebb9eac1"
+    },
+    "manifestme.sh": {
+      "checksum": "3eecb74ee10c40cfcce934124da38a23"
+    },
+    "reference/app.py": {
+      "checksum": "c3a0998f2302d9745870292549b95c5a"
+    },
+    "reference/bar_harbor_app.py": {
+      "checksum": "02793c5e07bd3e736af591c638f14e3e"
+    },
+    "reference/db_client.py": {
+      "checksum": "5ed4def9ef34844e7d0eccf3011d195a"
+    },
+    "reference/llm_cloud.py": {
+      "checksum": "56c504bc03b8f8fcb724910b3c519102"
+    },
+    "reference/map_utils.py": {
+      "checksum": "5f2f9a3ce557bbdaf9576f252787807a"
+    },
+    "supabase/migrations/20250322120001_data_sources_and_capture_methods.sql": {
+      "checksum": "520ece5265108f2e5407a8caf6c689c5"
+    },
+    "supabase/migrations/20250322120002_traffic_observations_fks.sql": {
+      "checksum": "fa82da45ebe16a61d3426fa108d78f5b"
+    },
+    "supabase/migrations/20250322120003_source_city_date_checks.sql": {
+      "checksum": "3345d623460dcb8f08fba43eeee44178"
+    },
+    "supabase/migrations/20250322120004_congestion_pricing_periods.sql": {
+      "checksum": "e2357ac84de3de012ea285e45b330360"
+    },
+    "supabase/migrations/20250322120005_metric_units.sql": {
+      "checksum": "4d1137af4fe3e7e9cc31df190f0766f0"
+    },
+    "supabase/migrations/20250322120006_metric_units_finalize_and_london.sql": {
+      "checksum": "7c5faf086ed96d3fb905205f930d33f2"
+    },
+    "supabase/migrations/20250406120000_london_ulez_expansion_2021.sql": {
+      "checksum": "43d3f47b29f20aceb68c51bbaeab7a77"
+    },
+    "supabase/migrations/20250406140000_metric_types_for_city_rpc.sql": {
+      "checksum": "27974da1d42af53a27f03b64230218b7"
+    }
+  }
+}
