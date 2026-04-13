@@ -1,7 +1,7 @@
 """
 Congestion Pricing Research Dashboard — Shiny for Python.
 Single-city analysis mode: charts and tables use the primary city only.
-Optional reference cities load separate observations for AI context (not shown in charts).
+Single-city analysis; data loads automatically when the city or metric changes.
 Data from city_vehicle_count via db_client.py; map via map_utils.py; AI via llm_cloud.py.
 """
 
@@ -381,7 +381,7 @@ app_ui = ui.page_fluid(
         ui.tags.div(
             {"class": "d-flex align-items-center"},
             ui.tags.span({"class": "brand"}, "Congestion Pricing Research Dashboard"),
-            ui.tags.span({"class": "sub"}, "Single-city analysis · reference context"),
+            ui.tags.span({"class": "sub"}, "Single-city analysis"),
         ),
     ),
     ui.layout_sidebar(
@@ -389,15 +389,9 @@ app_ui = ui.page_fluid(
             ui.tags.div({"class": "section-label"}, "Analysis scope"),
             ui.input_select(
                 "primary_city",
-                "Primary city (charts & tables)",
+                "City (charts & tables)",
                 choices={"SGP": "Singapore", "LON": "London"},
                 selected="SGP",
-            ),
-            ui.input_checkbox_group(
-                "reference_cities",
-                "Reference cities (context for AI only; not shown in charts)",
-                choices={"SGP": "Singapore", "LON": "London"},
-                selected=[],
             ),
             ui.tags.hr(),
             ui.tags.div({"class": "section-label mt-2"}, "Metric"),
@@ -407,12 +401,14 @@ app_ui = ui.page_fluid(
                 choices={"": "All metrics"},
                 selected="",
             ),
-            ui.tags.hr(),
-            ui.tags.div({"class": "section-label mt-2"}, "Year range"),
-            ui.input_numeric("year_min", "From", value=1990, min=1975, max=2024),
-            ui.input_numeric("year_max", "To", value=2024, min=1975, max=2024),
-            ui.tags.hr(),
-            ui.input_action_button("load_btn", "Load data", class_="btn-primary w-100 mt-1"),
+            ui.tags.p(
+                "All years available for the selected city are included.",
+                {"style": "font-size:0.75rem;color:#94a3b8;margin-bottom:0.75rem;"},
+            ),
+            ui.tags.p(
+                "Data refreshes when you change city or metric.",
+                {"style": "font-size:0.75rem;color:#94a3b8;margin-bottom:0.5rem;"},
+            ),
             ui.tags.div(
                 {"class": "mt-2 p-2", "style": "min-height:2.5rem;border:1px solid #e2e8f0;border-radius:8px;background:white;"},
                 ui.output_ui("loading_status_ui"),
@@ -513,10 +509,8 @@ def server(input, output, session):
 
     # Reactive state
     obs_primary      = reactive.Value(pd.DataFrame())
-    obs_reference    = reactive.Value(pd.DataFrame())
     cities_df        = reactive.Value(pd.DataFrame())
     policy_primary_df = reactive.Value(pd.DataFrame())
-    policy_reference_df = reactive.Value(pd.DataFrame())
     metric_units_df  = reactive.Value(pd.DataFrame())
     loading        = reactive.Value(False)
     load_error     = reactive.Value(None)
@@ -549,17 +543,6 @@ def server(input, output, session):
         selected = curr if curr in choices else ""
         ui.update_select("metric_type", choices=choices, selected=selected, session=session)
 
-    @reactive.Effect
-    @reactive.event(input.primary_city, input.reference_cities)
-    def _sync_reference_cities():
-        """Keep only Singapore/London, and never duplicate the primary city as a reference."""
-        p = input.primary_city()
-        allowed = {"SGP", "LON"}
-        curr = list(input.reference_cities() or [])
-        new = [c for c in curr if c in allowed and c != p]
-        if new != curr:
-            ui.update_checkbox_group("reference_cities", selected=new, session=session)
-
     # -----------------------------------------------------------------------
     # Data loading
     # -----------------------------------------------------------------------
@@ -572,38 +555,21 @@ def server(input, output, session):
             cities_df.set(cities)
 
             primary = input.primary_city()
-            refs = [c for c in (input.reference_cities() or []) if c and c != primary]
-
             if not primary:
                 obs_primary.set(pd.DataFrame())
-                obs_reference.set(pd.DataFrame())
                 policy_primary_df.set(pd.DataFrame())
-                policy_reference_df.set(pd.DataFrame())
                 loading.set(False)
                 return
 
-            y0 = int(input.year_min() or 1975)
-            y1 = int(input.year_max() or 2024)
             mt = input.metric_type() or None
 
             obs_p = fetch_observations(
                 city_codes=[primary],
                 metric_type=mt,
-                year_min=y0,
-                year_max=y1,
+                year_min=None,
+                year_max=None,
             )
             obs_primary.set(obs_p)
-
-            if refs:
-                obs_r = fetch_observations(
-                    city_codes=refs,
-                    metric_type=mt,
-                    year_min=y0,
-                    year_max=y1,
-                )
-                obs_reference.set(obs_r)
-            else:
-                obs_reference.set(pd.DataFrame())
 
             pp = fetch_policy_periods(city_code=primary)
             if not pp.empty:
@@ -613,31 +579,18 @@ def server(input, output, session):
                 pp["city_name"] = city_match.iloc[0]["city_name"] if not city_match.empty else primary
             policy_primary_df.set(pp)
 
-            ref_pol: list[pd.DataFrame] = []
-            for code in refs:
-                p = fetch_policy_periods(city_code=code)
-                if not p.empty:
-                    city_match = cities[cities["city_code"] == code]
-                    p = p.copy()
-                    p["city_code"] = code
-                    p["city_name"] = city_match.iloc[0]["city_name"] if not city_match.empty else code
-                    ref_pol.append(p)
-            policy_reference_df.set(
-                pd.concat(ref_pol, ignore_index=True) if ref_pol else pd.DataFrame()
-            )
-
         except Exception as e:
             load_error.set(str(e)[:200])
             obs_primary.set(pd.DataFrame())
-            obs_reference.set(pd.DataFrame())
             policy_primary_df.set(pd.DataFrame())
-            policy_reference_df.set(pd.DataFrame())
         finally:
             loading.set(False)
 
     @reactive.Effect
-    @reactive.event(input.load_btn)
-    def _on_load():
+    def _auto_load_on_scope_change():
+        """Load whenever city or metric changes; also runs once on session start."""
+        _ = input.primary_city()
+        _ = input.metric_type()
         _do_load()
 
     # -----------------------------------------------------------------------
@@ -777,7 +730,7 @@ def server(input, output, session):
             )
         df = obs_primary.get()
         if df.empty:
-            return ui.div("Select a primary city and click Load data.", {"style": "font-size:0.8rem;color:#94a3b8;"})
+            return ui.div("Select a city to load data.", {"style": "font-size:0.8rem;color:#94a3b8;"})
         return ui.div(
             f"{len(df):,} rows loaded",
             {"style": "font-size:0.8rem;color:#0f6e56;font-weight:500;"},
@@ -795,9 +748,9 @@ def server(input, output, session):
         obs = obs_primary.get()
         primary = input.primary_city()
         if not primary:
-            return ui.HTML(_map_error_html(480, "Choose a primary city and load data."))
+            return ui.HTML(_map_error_html(480, "Choose a city."))
         if cities.empty:
-            return ui.HTML(_map_error_html(480, "Load data to see the map."))
+            return ui.HTML(_map_error_html(480, "No city data yet; try another city or check the connection."))
         cities = cities[cities["city_code"] == primary]
         try:
             deck = build_city_map(cities, obs if not obs.empty else None)
@@ -816,7 +769,7 @@ def server(input, output, session):
             return ui.HTML('<div style="height:420px;"></div>')
         df = obs_primary.get()
         if df.empty:
-            return ui.div("Load data to see annual means.", {"style": "color:#64748b;padding:2rem;text-align:center;"})
+            return ui.div("No data for this city yet.", {"style": "color:#64748b;padding:2rem;text-align:center;"})
 
         am = _annual_means_for_chart(df)
         if am.empty:
@@ -879,7 +832,7 @@ def server(input, output, session):
     def policy_table_ui():
         df = policy_primary_df.get()
         if df.empty:
-            return ui.div("Load data to see policy periods.", {"style": "color:#64748b;padding:1rem;"})
+            return ui.div("No policy periods to show yet.", {"style": "color:#64748b;padding:1rem;"})
 
         rows = []
         for _, row in df.iterrows():
@@ -921,7 +874,7 @@ def server(input, output, session):
             return ui.HTML(f'<div style="height:420px;"></div>')
         df = obs_primary.get()
         if df.empty:
-            return ui.div("Load data to see trends.", {"style": "color:#64748b;padding:2rem;text-align:center;"})
+            return ui.div("No data for trends yet.", {"style": "color:#64748b;padding:2rem;text-align:center;"})
 
         fig = go.Figure()
         multi_metric = "metric_type" in df.columns and df["metric_type"].nunique() > 1
@@ -1160,7 +1113,7 @@ def server(input, output, session):
     def data_table_ui():
         df = obs_primary.get()
         if df.empty:
-            return ui.div("No data loaded.", {"style": "color:#64748b;padding:1rem;"})
+            return ui.div("No data for this city yet.", {"style": "color:#64748b;padding:1rem;"})
 
         display_cols = [
             "city_code", "city_name", "obs_year", "obs_quarter",
@@ -1214,12 +1167,12 @@ Output must be exactly three paragraphs of continuous academic prose. No markdow
 
 Paragraph 1: Identify and interpret the primary city's latest policy (from the structured policy line provided). Discuss whether the monitoring signals are plausibly consistent with an impact around or after that policy's start, or whether trends appear ambiguous or dominated by other factors. Be explicit that vehicle-count series alone do not prove causation; speak in terms of consistency, timing, and uncertainty.
 
-Paragraph 2: Summarize directional patterns and policy timing for each reference jurisdiction using the monitoring signals provided. Do not rank cities and do not compare absolute levels across cities.
+Paragraph 2: Summarize directional patterns, volatility, and temporal structure for the primary city only using the monitoring signals. Do not imply comparisons to other jurisdictions.
 
 Paragraph 3: Give recommended next steps for the primary city: whether further policy action (e.g. additional scheme, expansion, or tightening) appears warranted, premature, or should wait pending better evidence—justify using the same signals and limitations. If the evidence is insufficient to decide, say so and name what would be needed (e.g. longer post-implementation window, disaggregated metrics). Acknowledge data limitations (metric coverage, aggregation, missing years).
 
 Constraints:
-- Do not compare raw numeric levels across cities or imply that one city's counts are comparable to another's.
+- Focus on the primary city only; do not compare to other jurisdictions.
 - Use percent changes and volatility labels only as within-jurisdiction directional evidence.
 - Tone: academic, concise, evidence-based.
 - About 380 words maximum."""
@@ -1241,9 +1194,7 @@ Constraints:
         try:
             primary_code = input.primary_city()
             df_p = obs_primary.get()
-            df_r = obs_reference.get()
             pol_p = policy_primary_df.get()
-            pol_r = policy_reference_df.get()
             m_sel = input.metric_type()
             metric_label = "all metrics selected (multiple series may differ in scale)" if not m_sel else str(m_sel)
             y_range = (
@@ -1278,44 +1229,12 @@ Constraints:
                     ]
                 )
 
-            ref_blocks: list[str] = []
-            if df_r.empty or "city_code" not in df_r.columns:
-                ref_blocks.append("No reference data loaded.")
-            else:
-                for code in df_r["city_code"].dropna().unique():
-                    rdf = df_r[df_r["city_code"] == code]
-                    name = rdf.iloc[0]["city_name"] if "city_name" in rdf.columns else code
-                    rm = _monitoring_metrics(rdf)
-                    tr = _trend_direction(rdf)
-                    tim = _policy_timing_treated(pol_r, str(code))
-                    ref_lines = [
-                        f"reference_city: {name} ({code})",
-                        f"policy_periods_treated_calendar_years: {tim}",
-                        f"annual_series_trend_direction: {tr}",
-                    ]
-                    if rm.get("mixed_metrics"):
-                        ref_lines.append("monitoring_metrics: mixed_metrics")
-                    else:
-                        ref_lines.extend(
-                            [
-                                f"latest_annual_mean_value: {rm.get('latest_value')}, year: {rm.get('latest_year')}",
-                                f"mean_of_last_3_years: {rm.get('recent_avg')}",
-                                f"pct_change_latest_vs_year_minus_3: {rm.get('recent_trend_pct')}",
-                                f"volatility_band: {rm.get('volatility_label')}",
-                                f"unit: {rm.get('unit')}",
-                            ]
-                        )
-                    ref_blocks.append("\n".join(ref_lines))
+            user_prompt = f"""Structured signals for policy recommendations (single-city analysis).
 
-            user_prompt = f"""Structured signals for policy recommendations (single-city primary analysis).
-
-=== PRIMARY CITY (charts and official statistics refer to this city only) ===
+=== PRIMARY CITY ===
 {chr(10).join(primary_lines)}
 
-=== REFERENCE JURISDICTIONS (context only; do not treat as benchmarks for absolute levels) ===
-{chr(10).join(ref_blocks)}
-
-Instructions: Write the three paragraphs specified in the system prompt. Center paragraph 1 on the latest_policy_to_analyze line together with the monitoring metrics. In paragraph 3, address explicitly whether implementing another policy (or expanding or tightening an existing one) is warranted, not warranted, or unclear—and why. Reference blocks use parallel within-city statistics; you must not compare raw values across cities or claim one city is "better" than another on the basis of these numbers."""
+Instructions: Write the three paragraphs specified in the system prompt. Center paragraph 1 on the latest_policy_to_analyze line together with the monitoring metrics. In paragraph 3, address explicitly whether implementing another policy (or expanding or tightening an existing one) is warranted, not warranted, or unclear—and why."""
 
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
