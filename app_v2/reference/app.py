@@ -339,6 +339,34 @@ def deck_to_iframe(deck: pdk.Deck, height: int = 480) -> str:
         return _map_error_html(height, f"Map unavailable: {html.escape(err)}")
 
 
+def _prepare_trends_table_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Columns and sort order for the Trending tab data table (Shiny DataTable)."""
+    display_cols = [
+        "city_code",
+        "city_name",
+        "obs_year",
+        "obs_quarter",
+        "metric_type",
+        "value",
+        "unit",
+        "temporal_grain",
+        "policy_label",
+        "treated",
+        "source_api",
+    ]
+    show = [c for c in display_cols if c in df.columns]
+    sort_keys = ["city_code", "obs_year"]
+    if "obs_quarter" in df.columns and "obs_quarter" in show:
+        sort_keys.append("obs_quarter")
+    out = df[show].sort_values(sort_keys, kind="mergesort").copy()
+    if "treated" in out.columns:
+        out["treated"] = out["treated"].apply(
+            lambda x: "Yes" if x is True else ("No" if x is False else "—")
+        )
+    rename = {c: c.replace("_", " ").title() for c in out.columns}
+    return out.rename(columns=rename)
+
+
 # ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
@@ -480,8 +508,14 @@ app_ui = ui.page_fluid(
                             12,
                             ui.div(
                                 {"class": "dashboard-card"},
-                                ui.tags.h5("Data table (primary city)", {"style": "font-size:0.95rem;font-weight:600;margin-bottom:0.75rem;"}),
-                                ui.output_ui("data_table_ui"),
+                                ui.tags.h5("Data table", {"style": "font-size:0.95rem;font-weight:600;margin-bottom:0.75rem;"}),
+                                ui.output_data_frame("trends_data_table"),
+                                ui.output_ui("data_table_pager_ui"),
+                                ui.input_action_button(
+                                    "data_table_more_btn",
+                                    "Show me the next five rows",
+                                    class_="btn-outline-secondary btn-sm mt-2",
+                                ),
                             ),
                         ),
                     ),
@@ -516,6 +550,7 @@ def server(input, output, session):
     load_error     = reactive.Value(None)
     ai_text        = reactive.Value("")
     ai_loading     = reactive.Value(False)
+    data_table_visible_n = reactive.Value(5)
 
     @reactive.Effect
     @reactive.event(input.primary_city)
@@ -592,6 +627,27 @@ def server(input, output, session):
         _ = input.primary_city()
         _ = input.metric_type()
         _do_load()
+
+    @reactive.Effect
+    def _reset_trends_table_window():
+        obs_primary.get()
+        data_table_visible_n.set(5)
+
+    @reactive.Effect
+    @reactive.event(input.data_table_more_btn)
+    def _trends_table_show_more():
+        df = obs_primary.get()
+        if df.empty:
+            return
+        cur = data_table_visible_n.get()
+        data_table_visible_n.set(min(cur + 5, len(df)))
+
+    @reactive.Effect
+    def _sync_data_table_more_button():
+        df = obs_primary.get()
+        n = data_table_visible_n.get()
+        disabled = df.empty or n >= len(df)
+        ui.update_action_button("data_table_more_btn", disabled=disabled, session=session)
 
     # -----------------------------------------------------------------------
     # Derived reactives
@@ -1106,56 +1162,44 @@ def server(input, output, session):
         return ui.HTML(_plotly_to_iframe_html(fig, height=420, div_id="trend-chart"))
 
     # -----------------------------------------------------------------------
-    # Data table (Trends tab)
+    # Data table (Trends tab) — Shiny DataTable + "next five rows" paging
     # -----------------------------------------------------------------------
 
-    @render.ui
-    def data_table_ui():
+    @render.data_frame
+    def trends_data_table():
         df = obs_primary.get()
         if df.empty:
-            return ui.div("No data for this city yet.", {"style": "color:#64748b;padding:1rem;"})
-
-        display_cols = [
-            "city_code", "city_name", "obs_year", "obs_quarter",
-            "metric_type", "value", "unit", "temporal_grain",
-            "policy_label", "treated", "source_api",
-        ]
-        show = [c for c in display_cols if c in df.columns]
-        top = df[show].sort_values(["city_code", "obs_year"]).head(100)
-
-        thead_cells = "".join(
-            f"<th>{c.replace('_', ' ').title()}</th>" for c in show
-        )
-        thead = (
-            f"<thead style='font-size:0.75rem;text-transform:uppercase;color:#64748b;'>"
-            f"<tr>{thead_cells}</tr></thead>"
+            return None
+        prepared = _prepare_trends_table_df(df)
+        n = min(data_table_visible_n.get(), len(prepared))
+        visible = prepared.iloc[:n].copy()
+        return render.DataTable(
+            visible,
+            width="100%",
+            height="auto",
+            summary=False,
+            filters=False,
+            selection_mode="none",
         )
 
-        rows = []
-        for _, row in top.iterrows():
-            cells = []
-            for c in show:
-                v = row[c]
-                if c == "treated":
-                    badge = "badge-treated" if v else "badge-untreated"
-                    txt   = "Yes" if v else "No"
-                    cells.append(f"<td><span class='policy-badge {badge}'>{txt}</span></td>")
-                elif c == "value" and pd.notna(v):
-                    cells.append(f"<td>{int(v):,}</td>")
-                elif pd.isna(v) if not isinstance(v, str) else False:
-                    cells.append("<td style='color:#94a3b8'>—</td>")
-                else:
-                    cells.append(f"<td>{v}</td>")
-            rows.append(f"<tr style='font-size:0.85rem;'>{''.join(cells)}</tr>")
-
-        return ui.HTML(
-            f'<div style="overflow-x:auto;max-height:340px;overflow-y:auto;">'
-            f'<table class="table table-sm table-hover">'
-            f'{thead}<tbody>{"".join(rows)}</tbody>'
-            f'</table>'
-            f'<p style="font-size:0.75rem;color:#94a3b8;margin-top:0.5rem;">Showing first 100 rows.</p>'
-            f'</div>'
-        )
+    @render.ui
+    def data_table_pager_ui():
+        df = obs_primary.get()
+        if df.empty:
+            return ui.div(
+                "No data for this city yet.",
+                {"style": "color:#64748b;padding:0.25rem 0;font-size:0.88rem;"},
+            )
+        prepared = _prepare_trends_table_df(df)
+        total = len(prepared)
+        n = min(data_table_visible_n.get(), total)
+        if total == 0:
+            return None
+        if n >= total:
+            msg = f"Showing all {total} row{'s' if total != 1 else ''}."
+        else:
+            msg = f"Showing rows 1–{n} of {total}. Use the button below to reveal five more rows at a time."
+        return ui.div(msg, {"style": "font-size:0.8rem;color:#64748b;margin-top:0.5rem;"})
 
     # -----------------------------------------------------------------------
     # AI summary
